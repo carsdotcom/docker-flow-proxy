@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"io/ioutil"
+	"bytes"
 )
 
 const (
@@ -32,6 +34,11 @@ type Serve struct {
 
 var serverImpl = Serve{}
 var cert server.Certer = server.NewCert("/certs")
+
+type SwarmService struct {
+	Name string `json:"name,omitempty"`
+	Path string `json:"path,omitempty"`
+}
 
 type Response struct {
 	Status               string
@@ -93,6 +100,8 @@ func (m *Serve) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		logPrintf("Processing request %s", req.URL)
 	}
 	switch req.URL.Path {
+	case "/v1/docker-flow-proxy/services":
+		m.services(w, req)
 	case "/v1/docker-flow-proxy/reconfigure":
 		m.reconfigure(w, req)
 	case "/v1/docker-flow-proxy/remove":
@@ -124,6 +133,50 @@ func (m *Serve) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 func (m *Serve) isValidReconf(name string, path, domain []string, templateFePath string) bool {
 	return len(name) > 0 && (len(path) > 0 || len(templateFePath) > 0)
+}
+
+func (m *Serve) services(w http.ResponseWriter, req *http.Request) {
+	httpWriterSetContentType(w, "text/html")
+  lAddr := ""
+	if len(m.ListenerAddress) > 0 {
+		lAddr = fmt.Sprintf("http://%s:8080/v1/docker-flow-swarm-listener/services", m.ListenerAddress)
+	} 
+	resp, err := http.Get(lAddr)
+	defer resp.Body.Close()
+	if err != nil {
+		logPrintf("Unable to get registered services")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`<h3>Unable to get registered services</h3>`))
+	} else {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			logPrintf("Cannot read response body")
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`<h3>Cannot read response body</h3>`))
+		} else {
+			var services []SwarmService
+			err := json.Unmarshal(body, &services)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`<h3>Unable to unmarshal json</h3>`))
+			} else {
+				w.WriteHeader(http.StatusOK)
+				var buffer bytes.Buffer
+				if len(services) > 0 {
+					buffer.WriteString("<h2>Services deployed in this cluster</h2></p>")
+					buffer.WriteString("<ul>")
+					for _, service := range services {
+						li := fmt.Sprintf("<li>%s --> %s</li>", service.Name, service.Path)
+						buffer.WriteString(li)
+					}
+					buffer.WriteString("</ul>")
+				} else {
+					buffer.WriteString("<h2>There are no services deployed in this cluster</h2></p>")
+				}
+				w.Write(buffer.Bytes())
+			}
+		}
+	}
 }
 
 func (m *Serve) reconfigure(w http.ResponseWriter, req *http.Request) {

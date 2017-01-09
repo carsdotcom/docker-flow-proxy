@@ -1,3 +1,4 @@
+
 global
     pidfile /var/run/haproxy.pid
     tune.ssl.default-dh-param 2048{{.ExtraGlobal}}
@@ -34,8 +35,25 @@ defaults
     stats auth {{.StatsUser}}:{{.StatsPass}}
     stats uri /admin?stats
 {{.UserList}}
+
+backend services
+    mode http
+    reqrep ^([^\ ]*\ /)[/]?(.*) \1v1/docker-flow-proxy/services\2
+    server proxy proxy:8080
+
+backend config
+    mode http
+    reqrep ^([^\ ]*\ /)config[/]?(.*) \1v1/docker-flow-proxy/config\2
+    server proxy proxy:8080
+
 frontend services
     bind *:80
     bind *:443{{.CertsString}}
     mode http
+
+    acl is_root path -i /
+    use_backend services if is_root
+
+    acl base_url path_beg /config
+    use_backend config if base_url    
 {{.ExtraFrontend}}
